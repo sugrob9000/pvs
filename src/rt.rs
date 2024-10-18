@@ -11,66 +11,54 @@ use std::time::{Duration, Instant};
 
 pub type PinnedFuture<'t> = Pin<&'t mut dyn Future<Output = ()>>;
 
-const MAX_TASKS: usize = 4;
-
 pub struct Executor<'t> {
-  task_slots: [Option<Task<'t>>; MAX_TASKS],
-}
-
-struct Task<'t> {
-  future: PinnedFuture<'t>,
+  task_slots: [Option<PinnedFuture<'t>>; 4],
 }
 
 impl<'t> Executor<'t> {
   pub fn new() -> Self {
     Self {
-      // None in all slots - no tasks yet
       task_slots: Default::default(),
     }
   }
 
   pub fn with_task(mut self, task: PinnedFuture<'t>) -> Self {
-    for task_slot in self.task_slots.iter_mut() {
-      if task_slot.is_none() {
-        *task_slot = Some(Task { future: task });
-        return self;
-      }
-    }
-    panic!("Nowhere to push this task: max {MAX_TASKS}");
+    let slot = self
+      .task_slots
+      .iter_mut()
+      .find(|slot| slot.is_none())
+      .expect("Nowhere to push this task");
+    *slot = Some(task);
+    self
   }
 
   pub fn run(mut self) {
     loop {
-      let mut any_tasks = false;
+      let mut any_tasks_left = false;
 
       for task_slot in self.task_slots.iter_mut() {
         if let Some(task) = task_slot {
-          any_tasks = true;
+          // Waker is a formality here, we don't get to actually externally wake anything.
+          // Context also is, because in Rust all it does is give you access to a waker.
 
           let waker = unsafe {
             // SAFETY: TODO ensure it's OK to create this waker (besides the fact that
             // we never wake anything yet). Probably should pin both self and task.
-            Self::make_waker(task as *const Task)
+            let raw = RawWaker::new(task as *const PinnedFuture as *const (), &WAKER_VTABLE);
+            Waker::from_raw(raw)
           };
 
-          let mut context = Context::from_waker(&waker);
-
-          match task.future.as_mut().poll(&mut context) {
+          match task.as_mut().poll(&mut Context::from_waker(&waker)) {
             Poll::Ready(()) => *task_slot = None,
-            Poll::Pending => continue,
+            Poll::Pending => any_tasks_left = true,
           }
         }
       }
 
-      if !any_tasks {
+      if !any_tasks_left {
         break;
       }
     }
-  }
-
-  unsafe fn make_waker(task: *const Task) -> Waker {
-    let raw = RawWaker::new(task as *const (), &WAKER_VTABLE);
-    Waker::from_raw(raw)
   }
 }
 
