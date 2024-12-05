@@ -1,13 +1,11 @@
-//! The simplest executor I was able to come up with that works with async Rust and
-//! requires zero dynamic memory allocation.
+//! The simplest executor I was able to come up with.
 //! - Inplace buffer for fixed number of tasks
 //! - No spawner; all tasks must have been spawned before running
-//! - Only timer supported just yet. This timer is always eagerly polled.
 
+use crate::hal::{Duration, Instant};
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-use std::time::{Duration, Instant};
 
 pub type PinnedFuture<'t> = Pin<&'t mut dyn Future<Output = ()>>;
 
@@ -27,7 +25,7 @@ impl<'t> Executor<'t> {
       .task_slots
       .iter_mut()
       .find(|slot| slot.is_none())
-      .expect("Nowhere to push this task");
+      .expect("Nowhere to push task");
     *slot = Some(task);
     self
   }
@@ -65,17 +63,11 @@ impl<'t> Executor<'t> {
 static WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
   // Input is a mere pointer to a task. Cloned trivially.
   |clone_me| RawWaker::new(clone_me, &WAKER_VTABLE),
-  |_| todo!("wake"),
-  |_| todo!("wake_by_ref"),
+  |_| unimplemented!("wake"),
+  |_| unimplemented!("wake_by_ref"),
   // Input is a mere pointer to a task. Dropped trivially.
   |_drop_me| (),
 );
-
-pub fn sleep_for(duration: Duration) -> SleepFuture {
-  SleepFuture {
-    wake_at: Instant::now() + duration,
-  }
-}
 
 pub struct SleepFuture {
   wake_at: Instant,
@@ -89,5 +81,11 @@ impl Future for SleepFuture {
     } else {
       Poll::Pending
     }
+  }
+}
+
+pub fn sleep_for(duration: Duration) -> SleepFuture {
+  SleepFuture {
+    wake_at: Instant::now() + duration,
   }
 }
