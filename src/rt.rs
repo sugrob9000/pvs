@@ -2,7 +2,8 @@
 //! - Inplace buffer for fixed number of tasks
 //! - No spawner; all tasks must have been spawned before running
 
-use crate::hal::{Duration, Instant};
+use crate::hal;
+use crate::hal::time::{Duration, Instant};
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
@@ -40,8 +41,6 @@ impl<'t> Executor<'t> {
           // Context also is, because in Rust all it does is give you access to a waker.
 
           let waker = unsafe {
-            // SAFETY: TODO ensure it's OK to create this waker (besides the fact that
-            // we never wake anything yet). Probably should pin both self and task.
             let raw = RawWaker::new(task as *const PinnedFuture as *const (), &WAKER_VTABLE);
             Waker::from_raw(raw)
           };
@@ -69,6 +68,11 @@ static WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
   |_drop_me| (),
 );
 
+pub fn sleep_for(duration: Duration) -> SleepFuture {
+  let wake_at = Instant::now() + duration;
+  SleepFuture { wake_at }
+}
+
 pub struct SleepFuture {
   wake_at: Instant,
 }
@@ -84,8 +88,29 @@ impl Future for SleepFuture {
   }
 }
 
-pub fn sleep_for(duration: Duration) -> SleepFuture {
-  SleepFuture {
-    wake_at: Instant::now() + duration,
+/// Wait for button release. Returns how long the button has been pressed.
+pub fn wait_button_release() -> ButtonReleaseFuture {
+  ButtonReleaseFuture {
+    press_started_at: hal::button_pressed().then(Instant::now),
+  }
+}
+
+pub struct ButtonReleaseFuture {
+  press_started_at: Option<Instant>,
+}
+
+impl Future for ButtonReleaseFuture {
+  type Output = Duration;
+  fn poll(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+    let pressed = hal::button_pressed();
+    let now = Instant::now();
+    match self.press_started_at {
+      Some(at) if !pressed => Poll::Ready(now - at),
+      None if pressed => {
+        self.press_started_at = Some(now);
+        Poll::Pending
+      }
+      _ => Poll::Pending,
+    }
   }
 }

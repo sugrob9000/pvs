@@ -1,8 +1,6 @@
-use core::ops::Add;
-
-extern "C" {
-  fn HAL_GetTick() -> u32;
-}
+use crate::hal::raw::*;
+use core::cmp::max;
+use core::ops::{Add, Sub};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Instant {
@@ -44,5 +42,12 @@ impl Add<Instant> for Duration {
   type Output = Instant;
   fn add(self, rhs: Instant) -> Self::Output {
     rhs + self
+  }
+}
+
+impl Sub<Instant> for Instant {
+  type Output = Duration;
+  fn sub(self, rhs: Instant) -> Self::Output {
+    Duration::from_millis(max(0, self.millis_since_epoch - rhs.millis_since_epoch))
   }
 }
